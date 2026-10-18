@@ -54,8 +54,8 @@ void test_generate_unique_positions()
 {
 	size_t num_unique_positions = 15;
 	std::cout << std::endl << "Generating " << num_unique_positions << " unique positions...";
-	std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>> unique_positions = 
-		GameProcesses::generate_unique_positions(num_unique_positions);
+	std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, GameProcesses::ArrayPositionHasher> 
+		unique_positions = GameProcesses::generate_unique_positions(num_unique_positions);
 
 	size_t counter = 1;
 	for (auto it = unique_positions.begin(); it != unique_positions.end(); ++it)

@@ -37,6 +37,7 @@ x86/
 # CMake
 # ==============================
 
+out/
 build/
 build-*/
 cmake-build-*/
