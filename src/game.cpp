@@ -48,6 +48,13 @@ void GameProcesses::run()
             bot.take_action(PolicyConfigs::RIGHT);
         }
 
+        // Check collisions and if the bot escaped boundaries, with 
+        if (GameProcesses::check_escaped_boundary(bot))
+            GameProcesses::enforce_boundary(bot);
+        if (GameProcesses::reached_end(bot))
+            GameProcesses::reset_game(bot);
+
+
         // Drawing sprites to screen
         GameProcesses::draw_visited_states(bot);
         GameProcesses::draw_group(gas_group);
@@ -58,6 +65,7 @@ void GameProcesses::run()
         std::cout << std::endl << "X POS : " << bot.get_position().x << " Y POS : " << bot.get_position().y;
         std::cout << std::endl << GameProcesses::check_collision_between_sprite_and_group(bot, gas_group);
         std::cout << std::endl << GameProcesses::check_collision_between_sprite_and_group(bot, trap_group);
+        std::cout << std::endl << GameProcesses::check_escaped_boundary(bot);
 
         EndDrawing();
     }
@@ -68,6 +76,12 @@ void GameProcesses::run()
 
 void GameProcesses::draw_map()
 {
+    // Draw the terminal state
+    DrawRectangle(GameConfigs::TERMINAL_X_STATE * GameConfigs::TILE_SIZE,
+        GameConfigs::TERMINAL_Y_STATE * GameConfigs::TILE_SIZE,
+        GameConfigs::SPRITE_RADIUS * 2, GameConfigs::SPRITE_RADIUS * 2,
+        GetColor(GameConfigs::DEFAULT_TERMINAL_STATE_COLOR));
+
     // Draw vertical lines
     for (size_t s = 0; s * GameConfigs::TILE_SIZE <= GameConfigs::SCREEN_WIDTH - GameConfigs::GUI_WIDTH; ++s)
         DrawLine(s * GameConfigs::TILE_SIZE, 0, s * GameConfigs::TILE_SIZE, GameConfigs::SCREEN_HEIGHT, 
@@ -77,6 +91,20 @@ void GameProcesses::draw_map()
     for (size_t s = 0; s * GameConfigs::TILE_SIZE <= GameConfigs::SCREEN_HEIGHT; ++s)
         DrawLine(0, s * GameConfigs::TILE_SIZE, GameConfigs::SCREEN_WIDTH - GameConfigs::GUI_WIDTH, s * GameConfigs::TILE_SIZE,
             GetColor(GameConfigs::TILE_BORDER_COLOR));
+}
+
+bool GameProcesses::reached_end(const Sprite& sprite)
+{ return sprite.get_position().x == GameConfigs::TERMINAL_X_STATE && sprite.get_position().y == GameConfigs::TERMINAL_Y_STATE; }
+void GameProcesses::reset_game(Sprite& sprite)
+{
+    Vector2 start_position;
+    start_position.x = GameConfigs::BOT_START_X_STATE;
+    start_position.y = GameConfigs::BOT_START_Y_STATE;
+
+    bool reset_states = true;
+    GameProcesses::draw_visited_states(sprite, reset_states);
+
+    sprite.set_position(start_position);
 }
 
 // Fill each state visited with a circle
@@ -152,6 +180,44 @@ std::vector<T> GameProcesses::generate_sprites(std::unordered_set<std::array<siz
     }
 
     return group;
+}
+
+template <typename T>
+bool GameProcesses::check_escaped_boundary(const T& sprite)
+{
+    return sprite.get_position().x > GameConfigs::GAME_MAX_X_STATE ||
+        sprite.get_position().x < GameConfigs::GAME_MIN_X_STATE ||
+        sprite.get_position().y > GameConfigs::GAME_MAX_Y_STATE ||
+        sprite.get_position().y < GameConfigs::GAME_MIN_Y_STATE;
+}
+
+template <typename T>
+void GameProcesses::enforce_boundary(T& sprite)
+{
+    Vector2 curr_position = sprite.get_position();
+    if (curr_position.x > GameConfigs::GAME_MAX_X_STATE)
+    {   
+        curr_position.x = GameConfigs::GAME_MAX_X_STATE;
+        sprite.set_position(curr_position);
+    }
+
+    if (curr_position.x < GameConfigs::GAME_MIN_X_STATE)
+    {
+        curr_position.x = GameConfigs::GAME_MIN_X_STATE;
+        sprite.set_position(curr_position);
+    }
+
+    if (curr_position.y > GameConfigs::GAME_MAX_Y_STATE)
+    {
+        curr_position.y = GameConfigs::GAME_MAX_Y_STATE;
+        sprite.set_position(curr_position);
+    }
+        
+    if (curr_position.y < GameConfigs::GAME_MIN_Y_STATE)
+    {
+        curr_position.y = GameConfigs::GAME_MIN_Y_STATE;
+        sprite.set_position(curr_position);
+    }
 }
 
 template<typename T, typename S>

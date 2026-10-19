@@ -23,6 +23,7 @@ namespace GameConfigs
 	constexpr size_t DEFAULT_TRAP_COLOR = 0xFF0000FF;
 	constexpr size_t DEFAULT_GAS_COLOR = 0x00FF00FF;
 	constexpr size_t DEFAULT_VISITED_STATE_COLOR = 0x0000FF33;
+	constexpr size_t DEFAULT_TERMINAL_STATE_COLOR = 0xFF9900FF;
 	// Cosmetic effect for centering sprites in the middle of their tile
 	constexpr double SPRITE_Y_OFFSET = -0.05;
 	constexpr double SPRITE_X_OFFSET = -0.005;
@@ -35,6 +36,8 @@ namespace GameConfigs
 	constexpr size_t POSITION_DIMENSIONS = 2;
 	constexpr size_t BOT_START_X_STATE = 0;
 	constexpr size_t BOT_START_Y_STATE = 0;
+	constexpr size_t GAME_MIN_X_STATE = 0;
+	constexpr size_t GAME_MIN_Y_STATE = 0;
 	constexpr size_t GAME_MAX_X_STATE = (SCREEN_WIDTH - GUI_WIDTH) / TILE_SIZE - 1;
 	constexpr size_t GAME_MAX_Y_STATE = SCREEN_HEIGHT / TILE_SIZE - 1;
 	constexpr size_t TERMINAL_X_STATE = GAME_MAX_X_STATE;
@@ -43,9 +46,20 @@ namespace GameConfigs
 
 namespace GameProcesses
 {
+	// Main events
 	void run();
-	void draw_map();
-	void draw_visited_states(const Sprite& bot, bool reset_states = false);
+	bool reached_end(const Sprite& sprite);
+	void reset_game(Sprite& sprite);
+
+	// Collisions and border detection
+	template<typename T>
+	bool check_escaped_boundary(const T& sprite);
+	template <typename T>
+	void enforce_boundary(T& sprite);
+	template<typename T, typename S>
+	bool check_collision_between_sprites(const T& first, const S& second);
+	template<typename T, typename S>
+	bool check_collision_between_sprite_and_group(const T& sprite, const std::vector<S>& group);
 
 	// Generate trap and gas sprites
 	struct ArrayPositionHasher
@@ -53,17 +67,14 @@ namespace GameProcesses
 		size_t operator()(const std::array<size_t, GameConfigs::POSITION_DIMENSIONS>& array_position) const; };
 	std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, ArrayPositionHasher> 
 		generate_unique_positions(size_t num_positions, size_t min_range = 0, size_t max_range = GameConfigs::GAME_MAX_Y_STATE);
-	// This method will directly pop elements out of the set of arrays (unique_positions)
+	// This following method will directly pop elements out of the set of arrays (unique_positions)
 	template<typename T>
 	std::vector<T> generate_sprites(std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, ArrayPositionHasher>& unique_positions, 
 		size_t num_sprites = 0);
 
-	// Collisions
-	template<typename T, typename S> 
-	bool check_collision_between_sprites(const T& first, const S& second);
-	template<typename T, typename S> 
-	bool check_collision_between_sprite_and_group(const T& sprite, const std::vector<S>& group);
-
+	// Drawing functions
+	void draw_map();
+	void draw_visited_states(const Sprite& bot, bool reset_states = false);
 	// Set the position of sprites visually based on what state they are in
 	template<typename T>
 	void draw_sprites(const T& last);
