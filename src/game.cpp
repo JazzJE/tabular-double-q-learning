@@ -53,6 +53,8 @@ void GameProcesses::run()
             GameProcesses::enforce_boundary(bot);
         if (GameProcesses::reached_end(bot))
             GameProcesses::reset_game(bot);
+        if (GameProcesses::check_collision_between_sprite_and_group(bot, gas_group))
+            GameProcesses::remove_sprite_at_position_from_group(gas_group, bot.get_position());
 
 
         // Drawing sprites to screen
@@ -231,6 +233,20 @@ bool GameProcesses::check_collision_between_sprite_and_group(const T& sprite, co
         if (check_collision_between_sprites<T, S>(sprite, group[i]))
             return true;
     return false;
+}
+
+template<typename T>
+void GameProcesses::remove_sprite_at_position_from_group(std::vector<T>& group, const Vector2& position)
+{
+    if (group.empty())
+        return;
+
+    for (auto it = group.begin(); it != group.end(); ++it)
+        if ((*it).get_position().x == position.x && (*it).get_position().y == position.y)
+        {
+            group.erase(it);
+            break;
+        }
 }
 
 

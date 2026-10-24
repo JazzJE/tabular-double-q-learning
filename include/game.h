@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include <array>
 #include <vector>
+#include "raylib.h"
 
 class Sprite;
 
@@ -60,6 +61,8 @@ namespace GameProcesses
 	bool check_collision_between_sprites(const T& first, const S& second);
 	template<typename T, typename S>
 	bool check_collision_between_sprite_and_group(const T& sprite, const std::vector<S>& group);
+	template<typename T>
+	void remove_sprite_at_position_from_group(std::vector<T>& group, const Vector2& position);
 
 	// Generate trap and gas sprites
 	struct ArrayPositionHasher
