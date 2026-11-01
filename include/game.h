@@ -5,13 +5,22 @@
 #include "raylib.h"
 
 class Sprite;
+class GasSprite;
+class TrapSprite;
+class TabularQ;
 
 namespace GameConfigs
 {
 	// Screen dimensions and other GUI settings
 	constexpr size_t SCREEN_HEIGHT = 1600;
-	constexpr size_t GUI_WIDTH = 200;
+	constexpr size_t GUI_WIDTH = 425;
 	constexpr size_t SCREEN_WIDTH = SCREEN_HEIGHT + GUI_WIDTH;
+	constexpr size_t DEFAULT_STATS_X_POS = SCREEN_WIDTH - GUI_WIDTH + 20;
+	constexpr size_t DEFAULT_STATS_COLOR = 0x000000FF;
+	constexpr size_t DEFAULT_STATS_Y_POS = 350;
+	constexpr size_t DEFAULT_STATS_OFFSET = 50;
+	constexpr size_t DEFAULT_TITLE_FONT_SIZE = 30;
+	constexpr size_t DEFAULT_STATS_FONT_SIZE = 20;
 
 	// Tile configurations
 	constexpr size_t TILE_SIZE = SCREEN_HEIGHT / 100;
@@ -43,6 +52,11 @@ namespace GameConfigs
 	constexpr size_t GAME_MAX_Y_STATE = SCREEN_HEIGHT / TILE_SIZE - 1;
 	constexpr size_t TERMINAL_X_STATE = GAME_MAX_X_STATE;
 	constexpr size_t TERMINAL_Y_STATE = GAME_MAX_Y_STATE;
+
+	// FPS options
+	constexpr size_t SUP_FPS = 240;
+	constexpr size_t INF_FPS = 1;
+	static inline size_t MAX_FPS = 60;
 };
 
 namespace GameProcesses
@@ -62,7 +76,9 @@ namespace GameProcesses
 	template<typename T, typename S>
 	bool check_collision_between_sprite_and_group(const T& sprite, const std::vector<S>& group);
 	template<typename T>
-	void remove_sprite_at_position_from_group(std::vector<T>& group, const Vector2& position);
+	void remove_sprite_at_position_from_group(std::vector<T>& group, const Vector2& position, std::vector<T>& removed_group);
+	template<typename T>
+	void reappend_removed_group_sprites(std::vector<T>& group, std::vector<T>& removed_group);
 
 	// Generate trap and gas sprites
 	struct ArrayPositionHasher
@@ -78,6 +94,8 @@ namespace GameProcesses
 	// Drawing functions
 	void draw_map();
 	void draw_visited_states(const Sprite& bot, bool reset_states = false);
+	void draw_stats_screen(const Sprite& bot, const TabularQ& tq, double net_reward,
+		const std::vector<GasSprite>& gas_group, const std::vector<TrapSprite>& trap_group);
 	// Set the position of sprites visually based on what state they are in
 	template<typename T>
 	void draw_sprites(const T& last);

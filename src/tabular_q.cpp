@@ -24,6 +24,15 @@ size_t ValueFunction::StateActionPairHasher::operator()(const StateActionPair& s
     return std::hash<size_t>()(running_sum % MOD_PRIME);
 }
 
+// Fix every terminal state-action pair as 0
+ValueFunction::ValueFunction()
+{
+    std::array<size_t, GameConfigs::POSITION_DIMENSIONS> terminal_state =
+        { GameConfigs::TERMINAL_X_STATE, GameConfigs::TERMINAL_Y_STATE };
+    for (PolicyConfigs::Action a : PolicyConfigs::possible_actions)
+        value_function[StateActionPair(terminal_state, a)] = 0;
+}
+
 void ValueFunction::update_state_action_pair(const StateActionPair& sa, double new_value)
 { value_function[sa] = new_value; }
 

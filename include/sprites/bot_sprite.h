@@ -6,6 +6,10 @@
 
 class BotSprite : public Sprite
 {
+	private:
+		Vector2 previous_position;
+		PolicyConfigs::Action previous_action;
+
 	public:
 		BotSprite(
 			Vector2 starting_position = {0.0, 0.0},
@@ -16,4 +20,6 @@ class BotSprite : public Sprite
 
 		void take_action(PolicyConfigs::Action a);
 
+		Vector2 get_previous_position() { return previous_position; }
+		PolicyConfigs::Action get_previous_action() { return previous_action; }
 };

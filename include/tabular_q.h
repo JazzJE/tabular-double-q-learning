@@ -33,6 +33,8 @@ class ValueFunction
 		inline static double DEFAULT_RANDOM_MAX_VALUE = 100.0;
 
 	public: 
+
+		ValueFunction(); // Fix the terminal state to always have a value of 0 for every action
 		void update_state_action_pair(const StateActionPair& sa, double new_value);
 		double eval_state_action_pair(const StateActionPair& sa);
 };
@@ -40,10 +42,15 @@ class ValueFunction
 class TabularQ
 {
 	private:
-		ValueFunction value_function;
+		ValueFunction vf1;
+		ValueFunction vf2;
 
 	public:
-		static inline size_t epochs = 0;
-		static void increment_epochs(size_t n = 1) { epochs += n; }
+		// Select a best action in the current state from 
+		PolicyConfigs::Action epsilon_select_action_combined();
+
+
+		PolicyConfigs::Action epsilon_select_action_first();
+		PolicyConfigs::Action epsilon_select_action_second();
 
 };

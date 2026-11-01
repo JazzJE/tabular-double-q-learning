@@ -2,6 +2,9 @@
 
 void BotSprite::take_action(PolicyConfigs::Action a)
 {
+	previous_position = position;
+	previous_action = a;
+
 	if (a == PolicyConfigs::Action::UP)
 		position.y -= 1;
 	if (a == PolicyConfigs::Action::DOWN)
