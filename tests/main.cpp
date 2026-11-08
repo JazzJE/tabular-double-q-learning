@@ -9,7 +9,7 @@ void test_generate_unique_positions();
 
 int main()
 {
-	test_generate_unique_positions();
+	test_value_function_hashing();
 	return 0;
 }
 
@@ -48,6 +48,30 @@ void test_value_function_hashing()
 	val.update_state_action_pair(sa_four, 1500);
 	std::cout << std::endl << "SA-pair value of state two, action down (sa_two, state_two, down): " << val.eval_state_action_pair(sa_two) << std::endl;
 	std::cout << std::endl << "SA-pair value of state two, action right (sa_four, state_two, right): " << val.eval_state_action_pair(sa_four) << std::endl;
+
+	std::cout << std::endl << "===================================" << std::endl;
+
+	// Test if the select_best_action selects the action that maximizes the value given the current state
+	ValueFunction vf;
+	std::cout << std::endl << "Max value SA-pair (state_one): " << TabularQ::select_best_action(vf, state_one) << std::endl;
+	for (size_t i = 0; i < static_cast<size_t>(PolicyConfigs::Action::ACTION_COUNT); ++i)
+		std::cout << std::endl << "SA-pair value (state_one, action " 
+			<< static_cast<size_t>(PolicyConfigs::possible_actions[i]) << "): " 
+		<< vf.eval_state_action_pair(StateActionPair(state_one, PolicyConfigs::possible_actions[i]));
+	
+	std::cout << std::endl << "===================================" << std::endl;
+
+	// Test if the select_best_action selects an appropriate action even if there are two maxes
+	// Set the second action to the first action's value, who will be fixed to a max
+	vf.update_state_action_pair(StateActionPair(state_one, PolicyConfigs::possible_actions[1]), 99999);
+	vf.update_state_action_pair(StateActionPair(state_one, PolicyConfigs::possible_actions[1]),
+		vf.eval_state_action_pair(StateActionPair(state_one, PolicyConfigs::possible_actions[0])));
+	std::cout << std::endl << "Max value SA-pair (state_one): " << TabularQ::select_best_action(vf, state_one) << std::endl;
+	for (size_t i = 0; i < static_cast<size_t>(PolicyConfigs::Action::ACTION_COUNT); ++i)
+		std::cout << std::endl << "SA-pair value (state_one, action "
+		<< static_cast<size_t>(PolicyConfigs::possible_actions[i]) << "): "
+		<< vf.eval_state_action_pair(StateActionPair(state_one, PolicyConfigs::possible_actions[i]));
+	std::cout << std::endl;
 }
 
 void test_generate_unique_positions()

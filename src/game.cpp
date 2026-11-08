@@ -6,10 +6,13 @@
 #include <vector>
 #include <stdexcept>
 #include <limits> 
+#include <algorithm>
 #include <cmath>  
+#include <string>
+#include <fstream>
 #include "tabular_q.h"
 #include "bot_sprite.h"
-#include "gas_sprite.h"
+#include "rock_sprite.h"
 #include "trap_sprite.h"
 #include "game.h"
 #include "raylib.h"
@@ -20,47 +23,59 @@ void GameProcesses::run()
     InitWindow(GameConfigs::SCREEN_WIDTH, GameConfigs::SCREEN_HEIGHT, "Double Q-Learning Demonstration");
     SetTargetFPS(GameConfigs::MAX_FPS);
 
-    BotSprite bot;
+    Vector2 bot_start = { 0, 0 };
+    BotSprite bot(bot_start);
     
     std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, GameProcesses::ArrayPositionHasher> 
-        unique_positions = GameProcesses::generate_unique_positions(GameConfigs::NUM_GAS + GameConfigs::NUM_SPIKES);
+        unique_positions = GameProcesses::generate_unique_positions(GameConfigs::NUM_ROCK + GameConfigs::NUM_TRAPS);
 
-    // Create a vector of all the gas sprites
-    std::vector<GasSprite> gas_group = generate_sprites<GasSprite>(unique_positions, GameConfigs::NUM_GAS);
-    // Create a vector of all the gas sprites removed from the current episode to be reappended later
-    std::vector<GasSprite> removed_gas_group;
+    // Action selector
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> val_update_dis(0, 1);
+
+    // Create a vector of all the rock sprites
+    std::vector<RockSprite> rock_group = generate_sprites<RockSprite>(unique_positions, GameConfigs::NUM_ROCK);
+    // Create a vector of all the rock sprites removed from the current episode to be reappended later
+    std::vector<RockSprite> removed_rock_group;
 
     // Create a vector of all the trap sprites
-    std::vector<TrapSprite> trap_group = generate_sprites<TrapSprite>(unique_positions, GameConfigs::NUM_SPIKES);
+    std::vector<TrapSprite> trap_group = generate_sprites<TrapSprite>(unique_positions, GameConfigs::NUM_TRAPS);
 
     // Create two value functions
-    TabularQ tq;
+    ValueFunction vf1;
+    ValueFunction vf2;
+
+    bool reset_visited_states = false;
+    bool visualize_learning = true;
+    // Counters to keep track of how many times the bot exits the boundary or collides with a trap
+    size_t trap_collision_count = 0, exit_boundary_count = 0;
 
     while (!WindowShouldClose()) {
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
         double net_reward = 0;
+        PolicyConfigs::curr_steps += 1;
 
-        // If we've reached the terminal state, reset the game and continue
-        if (GameProcesses::reached_end(bot))
+        // If we've reached the terminal state or we've exceed the number of steps taken, reset the game and continue
+        if (GameProcesses::reached_end(bot) || PolicyConfigs::curr_steps > PolicyConfigs::MAX_STEPS)
         {
             GameProcesses::reset_game(bot);
-            GameProcesses::reappend_removed_group_sprites(gas_group, removed_gas_group);
-            GameProcesses::draw_visited_states(bot);
+            GameProcesses::reappend_removed_group_sprites(rock_group, removed_rock_group);
             PolicyConfigs::increment_epochs();
+            EndDrawing();
             continue;
         }
+        
 
-        if (IsKeyDown(KEY_W))
-            bot.take_action(PolicyConfigs::UP);
-        if (IsKeyDown(KEY_S))
-            bot.take_action(PolicyConfigs::DOWN);
-        if (IsKeyDown(KEY_A))
-            bot.take_action(PolicyConfigs::LEFT);
-        if (IsKeyDown(KEY_D))
-            bot.take_action(PolicyConfigs::RIGHT);
+        Vector2 prev_position = bot.get_position();
+        std::array<size_t, GameConfigs::POSITION_DIMENSIONS> prev_state_array = { prev_position.x, prev_position.y };
+        PolicyConfigs::Action prev_epsilon_best_action = TabularQ::epsilon_select_best_action_combined(vf1, vf2, prev_state_array);
+        StateActionPair prev_pair = StateActionPair(prev_state_array, prev_epsilon_best_action);
+        bot.take_action(prev_epsilon_best_action);
 
+        // Keybind options and processing
         if (IsKeyDown(KEY_UP) && GameConfigs::MAX_FPS < GameConfigs::SUP_FPS)
         {
             GameConfigs::MAX_FPS += 1;
@@ -72,34 +87,95 @@ void GameProcesses::run()
             SetTargetFPS(GameConfigs::MAX_FPS);
         }
 
-        // Penalties
+        if (IsKeyDown(KEY_W))
+            PolicyConfigs::EPSILON = std::min(1.0, PolicyConfigs::EPSILON + 0.01);
+        if (IsKeyDown(KEY_S))
+            PolicyConfigs::EPSILON = std::max(0.0, PolicyConfigs::EPSILON - 0.01);
+        if (IsKeyDown(KEY_E) && PolicyConfigs::LEARNING_RATE < 1)
+            PolicyConfigs::LEARNING_RATE = std::min(1.0, PolicyConfigs::LEARNING_RATE + 0.01);
+        if (IsKeyDown(KEY_D) && PolicyConfigs::LEARNING_RATE > 0)
+            PolicyConfigs::LEARNING_RATE = std::max(0.0, PolicyConfigs::LEARNING_RATE - 0.01);
+
+        if (GameProcesses::timer < GameConfigs::BUTTON_COOLDOWN)
+            GameProcesses::timer += GetFrameTime();
+
+        if (IsKeyDown(KEY_C) && GameProcesses::timer > GameConfigs::BUTTON_COOLDOWN)
+        { reset_visited_states = !reset_visited_states; GameProcesses::timer = 0.0; }
+        if (IsKeyDown(KEY_P) && GameProcesses::timer > GameConfigs::BUTTON_COOLDOWN)
+        { visualize_learning = !visualize_learning; GameProcesses::timer = 0.0; }
+
+        // Penalties and enforcing boundary checks
         net_reward += PolicyConfigs::TRAVEL_PENALTY;
         if (GameProcesses::check_escaped_boundary(bot))
         {
+            GameConfigs::BOUNDARY_EXIT_COUNTER += 1;
             net_reward += PolicyConfigs::BOUNDARY_EXIT_PENALTY;
             GameProcesses::enforce_boundary(bot);
         }
         if (GameProcesses::check_collision_between_sprite_and_group(bot, trap_group))
+        {
+            GameConfigs::TRAP_COLLISION_COUNTER += 1;
             net_reward += PolicyConfigs::TRAP_PENALTY;
+            bot.set_position(prev_position);
+        }
+
+        // Get the position only after enforcing boundary checks
+        std::array<size_t, GameConfigs::POSITION_DIMENSIONS> curr_state_array = { bot.get_position().x, bot.get_position().y };
+        GameProcesses::visited_states.insert(curr_state_array);
+
+        if (GameProcesses::visited_states.find(curr_state_array) != GameProcesses::visited_states.end())
+            net_reward += PolicyConfigs::REVISIT_PENALTY;
 
         // Rewards
-        if (GameProcesses::check_collision_between_sprite_and_group(bot, gas_group))
+        if (GameProcesses::check_collision_between_sprite_and_group(bot, rock_group))
         {
-            net_reward += PolicyConfigs::GAS_REWARD;
-            GameProcesses::remove_sprite_at_position_from_group(gas_group, bot.get_position(), removed_gas_group);
+            net_reward += PolicyConfigs::ROCK_REWARD;
+            GameProcesses::remove_sprite_at_state_from_group(curr_state_array, rock_group, removed_rock_group);
         }
         if (GameProcesses::reached_end(bot))
             net_reward += PolicyConfigs::TERMINAL_REWARD;
 
-        // Drawing sprites to screen
-        GameProcesses::draw_visited_states(bot);
-        GameProcesses::draw_group(gas_group);
-        GameProcesses::draw_group(trap_group);
-        GameProcesses::draw_sprites(bot);
-        GameProcesses::draw_map();
+        // Get the previous value, the max value of the current state, and the new (q-learning updated) value of the state
+        double prev_value, new_value, curr_max_value;
+        // Update rule; half chance to update value function 1, half chance to update value function 2
+        bool update_first_vf = (val_update_dis(gen) < 0.5) ? 1 : 0;
+        if (update_first_vf)
+        {
+            prev_value = vf1.eval_state_action_pair(prev_pair);
+            PolicyConfigs::Action curr_max_action = TabularQ::select_best_action(vf1, curr_state_array);
+            StateActionPair curr_max_pair = StateActionPair(curr_state_array, curr_max_action);
+
+            curr_max_value = vf2.eval_state_action_pair(curr_max_pair);
+            new_value = prev_value + PolicyConfigs::LEARNING_RATE * (net_reward + PolicyConfigs::DISCOUNT_RATE * curr_max_value - prev_value);
+
+            vf1.update_state_action_pair(prev_pair, new_value);
+        }
+        else
+        {
+            prev_value = vf2.eval_state_action_pair(prev_pair);
+            PolicyConfigs::Action curr_max_action = TabularQ::select_best_action(vf2, curr_state_array);
+            StateActionPair curr_max_pair = StateActionPair(curr_state_array, curr_max_action);
+
+            curr_max_value = vf1.eval_state_action_pair(curr_max_pair);
+            new_value = prev_value + PolicyConfigs::LEARNING_RATE * (net_reward + PolicyConfigs::DISCOUNT_RATE * curr_max_value - prev_value);
+
+            vf2.update_state_action_pair(prev_pair, new_value);
+        }
+
+        // Drawing sprites to screen IFF the user wants to visualize the learning process, else just draw "training"
+        if (visualize_learning)
+        {
+            GameProcesses::draw_visited_states(reset_visited_states);
+            GameProcesses::draw_group(rock_group);
+            GameProcesses::draw_group(trap_group);
+            GameProcesses::draw_sprites(bot);
+            GameProcesses::draw_map();
+        }
+        else
+            GameProcesses::draw_training_screen();
 
         // Draw the menu on the right of the game
-        GameProcesses::draw_stats_screen(bot, tq, net_reward, gas_group, trap_group);
+        GameProcesses::draw_stats_screen(bot, update_first_vf, prev_value, curr_max_value, new_value, net_reward, rock_group, trap_group);
 
         EndDrawing();
     }
@@ -135,32 +211,31 @@ void GameProcesses::reset_game(Sprite& sprite)
     start_position.x = GameConfigs::BOT_START_X_STATE;
     start_position.y = GameConfigs::BOT_START_Y_STATE;
 
-    bool reset_states = true;
-    GameProcesses::draw_visited_states(sprite, reset_states);
+    bool reset_visited_states = true;
+    GameProcesses::draw_visited_states(reset_visited_states);
+
+    GameConfigs::TRAP_COLLISION_COUNTER = 0;
+    GameConfigs::BOUNDARY_EXIT_COUNTER = 0;
+    PolicyConfigs::curr_steps = 0;
 
     sprite.set_position(start_position);
 }
 
 // Fill each state visited with a circle
-void GameProcesses::draw_visited_states(const Sprite& bot, bool reset_states)
+void GameProcesses::draw_visited_states(bool reset_visited_states)
 {
-    static std::set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>> visited_states;
-
-    std::array<size_t, GameConfigs::POSITION_DIMENSIONS> curr_position = { bot.get_position().x, bot.get_position().y };
-    visited_states.insert(curr_position);
+    if (reset_visited_states)
+        visited_states.clear();
 
     for (auto it = visited_states.begin(); it != visited_states.end(); ++it)
         DrawCircle((*it)[0] * GameConfigs::TILE_SIZE + GameConfigs::TILE_SIZE / 2.0 + GameConfigs::SPRITE_X_OFFSET,
             (*it)[1] * GameConfigs::TILE_SIZE + GameConfigs::TILE_SIZE / 2.0 + GameConfigs::SPRITE_Y_OFFSET,
             GameConfigs::SPRITE_RADIUS, GetColor(GameConfigs::DEFAULT_VISITED_STATE_COLOR));
-
-    if (reset_states)
-        visited_states.clear();
 }
 
 // Draw the game menu to the right of the game
-void GameProcesses::draw_stats_screen(const Sprite& bot, const TabularQ& tq, double net_reward,
-    const std::vector<GasSprite>& gas_group, const std::vector<TrapSprite>& trap_group)
+void GameProcesses::draw_stats_screen(const BotSprite& bot, bool update_first_vf, double prev_value, double curr_max_value, 
+    double new_value, double net_reward, const std::vector<RockSprite>& rock_group, const std::vector<TrapSprite>& trap_group)
 {
     // Position
     DrawText("BOT DESC.", GameConfigs::DEFAULT_STATS_X_POS,
@@ -170,49 +245,91 @@ void GameProcesses::draw_stats_screen(const Sprite& bot, const TabularQ& tq, dou
     DrawText(TextFormat("Y POS: %i", static_cast<size_t>(bot.get_position().y)), GameConfigs::DEFAULT_STATS_X_POS,
         GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 2.25, GameConfigs::DEFAULT_STATS_FONT_SIZE, 
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText(TextFormat("TRAP COLLIDE COUNT: %i", GameConfigs::TRAP_COLLISION_COUNTER), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 3.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText(TextFormat("BOUND EXIT COUNT: %i", GameConfigs::BOUNDARY_EXIT_COUNTER), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 4.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
 
     // Value Functions and Rewards
+    std::string vf_update_text = (update_first_vf) ? "VF1" : "VF2";
+    std::string vf_non_update_text = (!update_first_vf) ? "VF1" : "VF2";
     DrawText("VALUES & REWARDS", GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 3.75, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 5.75, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
-    DrawText(TextFormat("STATE-ACTION VALUE (VF1): %.2f", 0), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 5, GameConfigs::DEFAULT_STATS_FONT_SIZE, 
+    std::string previous_value_text = "PREV. STATE VALUE (" + vf_update_text + ") : % .2f";
+    DrawText(TextFormat(previous_value_text.c_str(), prev_value), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 7, GameConfigs::DEFAULT_STATS_FONT_SIZE, 
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
-    DrawText(TextFormat("STATE-ACTION VALUE (VF2): %.2f", 1), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 6, GameConfigs::DEFAULT_STATS_FONT_SIZE, 
+    std::string curr_max_value_text = "CURR. STATE MAX VALUE (" + vf_non_update_text + "): % .2f";
+    DrawText(TextFormat(curr_max_value_text.c_str(), curr_max_value), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 8, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    std::string new_value_text = "NEW PREV. STATE VALUE (" + vf_update_text + "): % .2f";
+    DrawText(TextFormat(new_value_text.c_str(), new_value), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 9, GameConfigs::DEFAULT_STATS_FONT_SIZE, 
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     DrawText(TextFormat("REWARD: %.2f", net_reward), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 7, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 10, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
 
     // Configs
     DrawText("CONFIGS", GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 8.5, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 11.5, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     DrawText(TextFormat("EPSILON: %.2f", PolicyConfigs::EPSILON), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 9.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 12.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     DrawText(TextFormat("DISC. RATE: %.2f", PolicyConfigs::DISCOUNT_RATE), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 10.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 13.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText(TextFormat("LEARNING RATE: %.2f", PolicyConfigs::LEARNING_RATE), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 14.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     DrawText(TextFormat("EPOCH COUNT: %i", PolicyConfigs::epochs), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 11.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 15.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     DrawText(TextFormat("MAX FPS: %i", GameConfigs::MAX_FPS), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 12.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 16.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText(TextFormat("MAX # STEPS: %i", PolicyConfigs::MAX_STEPS), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 17.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText(TextFormat("CURRENT # STEPS: %i", PolicyConfigs::curr_steps), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 18.75, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     
     // Gas and trap count
     DrawText("INTERACTABLES", GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 14.25, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 20.25, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
-    DrawText(TextFormat("GAS COUNT: %i", gas_group.size()), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 15.5, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+    DrawText(TextFormat("ROCK COUNT: %i", rock_group.size()), GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 21.5, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
     DrawText(TextFormat("TRAP COUNT: %i", trap_group.size()), GameConfigs::DEFAULT_STATS_X_POS,
-        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 16.5, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 22.5, GameConfigs::DEFAULT_STATS_FONT_SIZE,
         GetColor(GameConfigs::DEFAULT_STATS_COLOR));
 
+    // Keybinds
+    DrawText("KEYBINDS", GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 24, GameConfigs::DEFAULT_TITLE_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText("Up/Down Arrow - FPS Change", GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 25.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText("W/S - Epsilon Change", GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 26.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText("E/D - Learning R. Change", GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 27.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText("C - Toggle Visited States", GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 28.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
+    DrawText("P - Toggle Visualization", GameConfigs::DEFAULT_STATS_X_POS,
+        GameConfigs::DEFAULT_STATS_Y_POS + GameConfigs::DEFAULT_STATS_OFFSET * 29.25, GameConfigs::DEFAULT_STATS_FONT_SIZE,
+        GetColor(GameConfigs::DEFAULT_STATS_COLOR));
 }
 
 // Custom hasher for processing position arrays
@@ -233,7 +350,7 @@ std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, GamePro
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dis(0, GameConfigs::GAME_MAX_Y_STATE);
+    static std::uniform_real_distribution<double> dis(min_range, max_range);
 
     for (size_t _ = 0; _ < num_positions; ++_)
     {
@@ -333,13 +450,14 @@ bool GameProcesses::check_collision_between_sprite_and_group(const T& sprite, co
 
 // Before removing the sprite at the current position, add it to a special group of removed sprites to reappend them later
 template<typename T>
-void GameProcesses::remove_sprite_at_position_from_group(std::vector<T>& group, const Vector2& position, std::vector<T>& removed_group)
+void GameProcesses::remove_sprite_at_state_from_group(const std::array<size_t, GameConfigs::POSITION_DIMENSIONS>& bot_state, 
+    std::vector<T>& group, std::vector<T>& removed_group)
 {
     if (group.empty())
         return;
 
     for (auto it = group.begin(); it != group.end(); ++it)
-        if ((*it).get_position().x == position.x && (*it).get_position().y == position.y)
+        if ((*it).get_position().x == bot_state[0] && (*it).get_position().y == bot_state[1])
         {
             removed_group.push_back(*it);
             group.erase(it);
@@ -374,4 +492,10 @@ void GameProcesses::draw_group(const std::vector<T>& group)
 {
     for (size_t i = 0; i < group.size(); ++i)
         GameProcesses::draw_sprites(group[i]);
+}
+
+void GameProcesses::draw_training_screen()
+{
+    DrawText("TRAINING...", GameConfigs::DEFAULT_TRAINING_SCREEN_X_POS, GameConfigs::DEFAULT_TRAINING_SCREEN_Y_POS, 
+        GameConfigs::DEFAULT_TITLE_FONT_SIZE, GetColor(GameConfigs::DEFAULT_STATS_COLOR));
 }

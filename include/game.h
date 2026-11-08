@@ -1,29 +1,35 @@
 #pragma once
 #include <unordered_set>
 #include <array>
+#include <set>
 #include <vector>
 #include "raylib.h"
+#include "policy_configs.h"
 
 class Sprite;
-class GasSprite;
+class BotSprite;
+class RockSprite;
 class TrapSprite;
-class TabularQ;
+class ValueFunction;
 
 namespace GameConfigs
 {
 	// Screen dimensions and other GUI settings
 	constexpr size_t SCREEN_HEIGHT = 1600;
-	constexpr size_t GUI_WIDTH = 425;
+	constexpr size_t GUI_WIDTH = 475;
 	constexpr size_t SCREEN_WIDTH = SCREEN_HEIGHT + GUI_WIDTH;
 	constexpr size_t DEFAULT_STATS_X_POS = SCREEN_WIDTH - GUI_WIDTH + 20;
 	constexpr size_t DEFAULT_STATS_COLOR = 0x000000FF;
-	constexpr size_t DEFAULT_STATS_Y_POS = 350;
+	constexpr size_t DEFAULT_STATS_Y_POS = 50;
 	constexpr size_t DEFAULT_STATS_OFFSET = 50;
 	constexpr size_t DEFAULT_TITLE_FONT_SIZE = 30;
 	constexpr size_t DEFAULT_STATS_FONT_SIZE = 20;
+	constexpr size_t DEFAULT_TRAINING_SCREEN_X_POS = (SCREEN_WIDTH - GUI_WIDTH) / 2 - 80;
+	constexpr size_t DEFAULT_TRAINING_SCREEN_Y_POS = SCREEN_HEIGHT / 2 - 80;
 
 	// Tile configurations
-	constexpr size_t TILE_SIZE = SCREEN_HEIGHT / 100;
+	constexpr size_t NUM_TILES_ALONG_WIDTH = 40;
+	constexpr size_t TILE_SIZE = SCREEN_HEIGHT / (SCREEN_HEIGHT / NUM_TILES_ALONG_WIDTH);
 	constexpr size_t TILE_COLOR = 0xFFFFFFFF;
 	constexpr size_t TILE_BORDER_COLOR = 0x000000FF;
 
@@ -31,16 +37,16 @@ namespace GameConfigs
 	constexpr size_t SPRITE_RADIUS = TILE_SIZE / 2;
 	constexpr size_t DEFAULT_BOT_COLOR = 0x000000FF;
 	constexpr size_t DEFAULT_TRAP_COLOR = 0xFF0000FF;
-	constexpr size_t DEFAULT_GAS_COLOR = 0x00FF00FF;
+	constexpr size_t DEFAULT_ROCK_COLOR = 0x00FF00FF;
 	constexpr size_t DEFAULT_VISITED_STATE_COLOR = 0x0000FF33;
 	constexpr size_t DEFAULT_TERMINAL_STATE_COLOR = 0xFF9900FF;
 	// Cosmetic effect for centering sprites in the middle of their tile
 	constexpr double SPRITE_Y_OFFSET = -0.05;
 	constexpr double SPRITE_X_OFFSET = -0.005;
 
-	// Number of traps and gas sprites
-	constexpr size_t NUM_GAS = 200;
-	constexpr size_t NUM_SPIKES = 300;
+	// Number of traps and rock sprites
+	constexpr size_t NUM_ROCK = 100;
+	constexpr size_t NUM_TRAPS = 200;
 
 	// Game config
 	constexpr size_t POSITION_DIMENSIONS = 2;
@@ -53,14 +59,20 @@ namespace GameConfigs
 	constexpr size_t TERMINAL_X_STATE = GAME_MAX_X_STATE;
 	constexpr size_t TERMINAL_Y_STATE = GAME_MAX_Y_STATE;
 
-	// FPS options
-	constexpr size_t SUP_FPS = 240;
+	// FPS, keyband options, and other trackers
+	constexpr size_t SUP_FPS = 1000;
 	constexpr size_t INF_FPS = 1;
 	static inline size_t MAX_FPS = 60;
+	constexpr double BUTTON_COOLDOWN = 0.5f;
+	static inline double timer = 0.0;
+	static inline size_t TRAP_COLLISION_COUNTER = 0;
+	static inline size_t BOUNDARY_EXIT_COUNTER = 0;
 };
 
 namespace GameProcesses
 {
+	static inline double timer = 0.0;
+
 	// Main events
 	void run();
 	bool reached_end(const Sprite& sprite);
@@ -76,13 +88,14 @@ namespace GameProcesses
 	template<typename T, typename S>
 	bool check_collision_between_sprite_and_group(const T& sprite, const std::vector<S>& group);
 	template<typename T>
-	void remove_sprite_at_position_from_group(std::vector<T>& group, const Vector2& position, std::vector<T>& removed_group);
+	void remove_sprite_at_state_from_group(const std::array<size_t, GameConfigs::POSITION_DIMENSIONS>& state, 
+		std::vector<T>& group, std::vector<T>& removed_group);
 	template<typename T>
 	void reappend_removed_group_sprites(std::vector<T>& group, std::vector<T>& removed_group);
 
-	// Generate trap and gas sprites
+	// Generate trap and rock sprites
 	struct ArrayPositionHasher
-	{ const size_t MOD_PRIME = pow(10, 9) + 9; const size_t POWER_PRIME = 31;
+	{ static constexpr size_t MOD_PRIME = 1000000009; static constexpr size_t POWER_PRIME = 31;
 		size_t operator()(const std::array<size_t, GameConfigs::POSITION_DIMENSIONS>& array_position) const; };
 	std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, ArrayPositionHasher> 
 		generate_unique_positions(size_t num_positions, size_t min_range = 0, size_t max_range = GameConfigs::GAME_MAX_Y_STATE);
@@ -91,11 +104,17 @@ namespace GameProcesses
 	std::vector<T> generate_sprites(std::unordered_set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>, ArrayPositionHasher>& unique_positions, 
 		size_t num_sprites = 0);
 
+	// Process keyboard input
+	void process_input(const BotSprite& );
+
+	// For visualizing what states the bot has visited in the current epoch
+	static std::set<std::array<size_t, GameConfigs::POSITION_DIMENSIONS>> visited_states;
+	void draw_visited_states(bool reset_visited_states = false);
+
 	// Drawing functions
 	void draw_map();
-	void draw_visited_states(const Sprite& bot, bool reset_states = false);
-	void draw_stats_screen(const Sprite& bot, const TabularQ& tq, double net_reward,
-		const std::vector<GasSprite>& gas_group, const std::vector<TrapSprite>& trap_group);
+	void draw_stats_screen(const BotSprite& bot, bool update_first_vf, double prev_value, double curr_max_value,
+		double new_value, double net_reward, const std::vector<RockSprite>& rock_group, const std::vector<TrapSprite>& trap_group);
 	// Set the position of sprites visually based on what state they are in
 	template<typename T>
 	void draw_sprites(const T& last);
@@ -103,4 +122,5 @@ namespace GameProcesses
 	void draw_sprites(const T& first, const Args&... rest);
 	template<typename T>
 	void draw_group(const std::vector<T>& group);
+	void draw_training_screen();
 };

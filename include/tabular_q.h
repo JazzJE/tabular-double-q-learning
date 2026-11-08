@@ -21,8 +21,8 @@ class ValueFunction
 	private:	
 		struct StateActionPairHasher
 		{
-			const size_t MOD_PRIME = pow(10, 9) + 9;
-			const size_t POWER_PRIME = 31;
+			static constexpr size_t MOD_PRIME = 1000000009;
+			static constexpr size_t POWER_PRIME = 31;
 
 			size_t operator()(const StateActionPair& sa) const;
 		};
@@ -30,27 +30,20 @@ class ValueFunction
 		std::unordered_map<StateActionPair, double, StateActionPairHasher> value_function;
 
 		inline static double DEFAULT_RANDOM_MIN_VALUE = 0.0;
-		inline static double DEFAULT_RANDOM_MAX_VALUE = 100.0;
+		inline static double DEFAULT_RANDOM_MAX_VALUE = 30.0;
 
 	public: 
 
-		ValueFunction(); // Fix the terminal state to always have a value of 0 for every action
 		void update_state_action_pair(const StateActionPair& sa, double new_value);
 		double eval_state_action_pair(const StateActionPair& sa);
 };
 
-class TabularQ
+namespace TabularQ
 {
-	private:
-		ValueFunction vf1;
-		ValueFunction vf2;
-
-	public:
-		// Select a best action in the current state from 
-		PolicyConfigs::Action epsilon_select_action_combined();
-
-
-		PolicyConfigs::Action epsilon_select_action_first();
-		PolicyConfigs::Action epsilon_select_action_second();
+	// Select a best action in the current state from summing the values from both functions
+	PolicyConfigs::Action epsilon_select_best_action_combined(ValueFunction& vf1, ValueFunction& vf2,
+		const std::array<size_t, GameConfigs::POSITION_DIMENSIONS>& state);
+	PolicyConfigs::Action select_best_action(ValueFunction& value_function, 
+		const std::array<size_t, GameConfigs::POSITION_DIMENSIONS>& state); // Select a best action in the current state
 
 };
